@@ -27,8 +27,8 @@ ENCOUNTERS_FILE = DATA_DIR / "encounters.json"
 PRESETS_FILE = DATA_DIR / "presets.json"
 
 MONSTER_DATABASES = {
-    "Базовая база монстров": "monsters_base.json",
-    "Кастомная база монстров": "monsters_custom.json",
+    "Бестиарий РУ": "monsters_base_ru.json",
+    "Бестиарий EN": "monsters_base.json",
 }
 
 STATUS_LIBRARY = {
