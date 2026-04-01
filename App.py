@@ -571,12 +571,11 @@ def inject_styles() -> None:
         """
         <style>
         .block-container {
-            padding-top: 1rem;
-            padding-bottom: 2rem;
-            max-width: 1500px;
+            padding-top: 0.9rem;
+            padding-bottom: 1.6rem;
+            max-width: 1800px;
         }
         .hero-card,
-        .app-card,
         .battle-hero,
         .encounter-row,
         .combat-card,
@@ -584,13 +583,27 @@ def inject_styles() -> None:
             border: 1px solid rgba(255,255,255,0.08);
             background: rgba(255,255,255,0.03);
             border-radius: 18px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.22);
         }
         .hero-card { padding: 24px; margin-top: 8vh; }
-        .app-card { padding: 16px; margin-bottom: 14px; }
         .battle-hero { padding: 18px; margin-bottom: 14px; }
-        .encounter-row { padding: 12px; margin-bottom: 10px; }
-        .combat-card { padding: 12px 14px; margin-bottom: 10px; }
-        .library-card { padding: 12px; margin-bottom: 10px; }
+        .encounter-row { padding: 12px 14px; margin-bottom: 10px; }
+        .combat-card {
+            padding: 12px 14px;
+            margin-bottom: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+        .combat-card::before,
+        .encounter-row::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 6px;
+            background: var(--accent-color, rgba(255,255,255,0.2));
+        }
         .type-chip,
         .status-chip,
         .turn-chip {
@@ -608,19 +621,28 @@ def inject_styles() -> None:
             background: rgba(250, 204, 21, 0.18);
             border-color: rgba(250, 204, 21, 0.35);
         }
-        .muted-line {
-            color: rgba(255,255,255,0.68);
-            font-size: 0.9rem;
-        }
-        .top-nav-wrap button {
+        .metric-chip {
+            display: inline-block;
+            border-radius: 12px;
+            padding: 6px 10px;
+            margin-right: 8px;
             margin-bottom: 6px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.08);
         }
+        .small-gap { height: 0.35rem; }
         .section-title {
             font-size: 1.05rem;
             font-weight: 700;
             margin-bottom: 0.65rem;
         }
-        .small-gap { height: 0.35rem; }
+        .sidebar-nav-title {
+            margin-top: 0.2rem;
+            margin-bottom: 0.45rem;
+            font-weight: 700;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -629,14 +651,12 @@ def inject_styles() -> None:
 
 
 def header_bar() -> None:
-    left, mid, right = st.columns([1.8, 1.1, 0.7])
+    left, right = st.columns([1.8, 0.7])
     with left:
         st.title(APP_TITLE)
-    with mid:
-        st.markdown("### ")
-        st.caption(f"Пользователь: {st.session_state.auth_user}")
     with right:
         st.markdown("### ")
+        st.caption(f"Пользователь: {st.session_state.auth_user}")
         if st.button("Выйти", use_container_width=True):
             st.session_state.is_authenticated = False
             st.session_state.auth_user = None
@@ -685,22 +705,36 @@ def hp_ratio(current_hp: int, max_hp: int) -> float:
 
 def render_hp_bar(current_hp: int, max_hp: int) -> None:
     ratio = hp_ratio(current_hp, max_hp)
-    st.progress(ratio, text=f"{current_hp} / {max_hp} HP")
+    st.progress(ratio, text=f"❤️ {current_hp} / {max_hp}")
 
 
 
 def render_monster_sidebar(monsters: List[Dict[str, Any]]) -> None:
     with st.sidebar:
+        st.markdown("<div class='sidebar-nav-title'>Навигация</div>", unsafe_allow_html=True)
+        if st.button(
+            "Подготовка столкновения",
+            use_container_width=True,
+            type="primary" if st.session_state.screen == "prepare" else "secondary",
+            key="sidebar_nav_prepare",
+        ):
+            st.session_state.screen = "prepare"
+            st.rerun()
+        if st.button(
+            "Проведение боя",
+            use_container_width=True,
+            type="primary" if st.session_state.screen == "battle" else "secondary",
+            key="sidebar_nav_battle",
+        ):
+            st.session_state.screen = "battle"
+            st.rerun()
+
+        st.markdown("---")
         st.header("Карточка монстра")
         selected_name = st.session_state.selected_monster_sidebar
         if not selected_name:
             st.info("Кликни по имени монстра в бою, чтобы открыть его карточку.")
             return
-
-        close_col, _ = st.columns([1, 2])
-        if close_col.button("Закрыть карточку", use_container_width=True):
-            st.session_state.selected_monster_sidebar = None
-            st.rerun()
 
         monster = get_monster_by_name(monsters, selected_name)
         if not monster:
@@ -973,19 +1007,22 @@ def render_prepare_roster() -> None:
         bg = COMBATANT_TYPE_COLORS.get(combatant["type"], "rgba(255,255,255,0.04)")
         border = COMBATANT_TYPE_BORDER.get(combatant["type"], "rgba(255,255,255,0.14)")
         st.markdown(
-            f"<div class='encounter-row' style='background:{bg}; border-color:{border};'>",
+            f"<div class='encounter-row' style='background:{bg}; border-color:{border}; --accent-color:{border};'>",
             unsafe_allow_html=True,
         )
-        c1, c2, c3, c4 = st.columns([0.55, 2.2, 1.4, 0.9])
+        c1, c2, c3, c4 = st.columns([0.45, 2.0, 1.7, 0.9])
         with c1:
             st.markdown(f"### {idx + 1}")
         with c2:
             st.markdown(f"**{combatant['name']}**")
             st.markdown(f"<span class='type-chip'>{combatant_type_badge(combatant['type'])}</span>", unsafe_allow_html=True)
         with c3:
-            st.markdown(f"**Класс брони:** {combatant['armor_class']}")
-            st.markdown(f"**HP:** {combatant['current_hp']} / {combatant['max_hp']}")
-            st.markdown(f"**Инициатива:** {combatant['initiative']}")
+            metric_html = (
+                f"<span class='metric-chip'>🛡️ {combatant['armor_class']}</span>"
+                f"<span class='metric-chip'>⚡ {combatant['initiative']}</span>"
+                f"<span class='metric-chip'>❤️ {combatant['current_hp']} / {combatant['max_hp']}</span>"
+            )
+            st.markdown(metric_html, unsafe_allow_html=True)
         with c4:
             if st.button("Удалить", key=f"remove_create_{combatant['id']}", use_container_width=True):
                 st.session_state.create_combatants = [c for c in combatants if c["id"] != combatant["id"]]
@@ -1148,42 +1185,49 @@ def render_combatant_card(combatant: Dict[str, Any], index: int, is_active: bool
 
     bg = COMBATANT_TYPE_COLORS.get(combatant["type"], "rgba(255,255,255,0.04)")
     border = COMBATANT_TYPE_BORDER.get(combatant["type"], "rgba(255,255,255,0.14)")
-    active_shadow = "0 0 0 2px rgba(250, 204, 21, 0.55) inset;" if is_active else ""
+    active_shadow = "0 0 0 2px rgba(250, 204, 21, 0.55) inset" if is_active else "none"
     is_disabled = combatant["current_hp"] <= 0
     opacity = "0.65" if is_disabled else "1"
 
     st.markdown(
-        f"<div class='combat-card' style='background:{bg}; border-color:{border}; box-shadow:{active_shadow}; opacity:{opacity};'>",
+        f"<div class='combat-card' style='background:{bg}; border-color:{border}; --accent-color:{border}; box-shadow: {active_shadow}, 0 4px 12px rgba(0,0,0,0.22); opacity:{opacity};'>",
         unsafe_allow_html=True,
     )
-    left, center, right = st.columns([1.45, 1.25, 1.25], gap="medium")
 
-    with left:
-        title_cols = st.columns([0.25, 1.75])
-        title_cols[0].markdown(f"### {index + 1}")
-        with title_cols[1]:
+    info_col, state_col, action_col = st.columns([1.4, 1.8, 1.1], gap="medium")
+
+    with info_col:
+        top_left, top_right = st.columns([0.22, 1.78])
+        top_left.markdown(f"### {index + 1}")
+        with top_right:
             if combatant["type"] == "monster":
                 if st.button(combatant["name"], key=f"open_monster_{combatant['id']}", use_container_width=True):
                     st.session_state.selected_monster_sidebar = combatant.get("monster_ref") or combatant["name"]
                     st.rerun()
             else:
                 st.markdown(f"**{combatant['name']}**")
+
             chips = [f"<span class='type-chip'>{combatant_type_badge(combatant['type'])}</span>"]
             if is_active:
                 chips.append("<span class='turn-chip'>ХОД</span>")
             st.markdown("".join(chips), unsafe_allow_html=True)
-            st.caption(f"Инициатива: {combatant['initiative']} · Класс брони: {combatant['armor_class']}")
 
-    with center:
-        st.markdown("**HP**")
+    with state_col:
+        metric_html = (
+            f"<span class='metric-chip'>🛡️ {combatant['armor_class']}</span>"
+            f"<span class='metric-chip'>⚡ {combatant['initiative']}</span>"
+            f"<span class='metric-chip'>❤️ {combatant['current_hp']} / {combatant['max_hp']}</span>"
+        )
+        st.markdown(metric_html, unsafe_allow_html=True)
         render_hp_bar(int(combatant["current_hp"]), int(combatant["max_hp"]))
-        st.markdown("**Статусы**")
-        render_status_chips(combatant.get("statuses", []))
-        with st.expander("Изменить статусы"):
-            render_status_editor(combatant)
+        status_left, status_right = st.columns([1.35, 1.0])
+        with status_left:
+            render_status_chips(combatant.get("statuses", []))
+        with status_right:
+            with st.expander("Статусы"):
+                render_status_editor(combatant)
 
-    with right:
-        st.markdown("**Изменение HP**")
+    with action_col:
         hp_delta = st.number_input(
             "Значение изменения HP",
             value=0,
@@ -1191,11 +1235,12 @@ def render_combatant_card(combatant: Dict[str, Any], index: int, is_active: bool
             key=f"hp_delta_{combatant['id']}",
             label_visibility="collapsed",
         )
+        st.caption("Изменение HP")
         h1, h2 = st.columns(2)
-        if h1.button("Урон", key=f"damage_{combatant['id']}", use_container_width=True):
+        if h1.button("- Урон", key=f"damage_{combatant['id']}", use_container_width=True):
             apply_hp_delta(combatant["id"], -abs(int(hp_delta)))
             st.rerun()
-        if h2.button("Лечение", key=f"heal_{combatant['id']}", use_container_width=True):
+        if h2.button("+ Лечение", key=f"heal_{combatant['id']}", use_container_width=True):
             apply_hp_delta(combatant["id"], abs(int(hp_delta)))
             st.rerun()
 
@@ -1230,28 +1275,6 @@ def render_battle_screen(monsters: List[Dict[str, Any]]) -> None:
 # ============================================================
 
 
-def render_navigation() -> None:
-    with st.container(border=True):
-        st.markdown("<div class='top-nav-wrap'>", unsafe_allow_html=True)
-        st.markdown("**Навигация**")
-        if st.button(
-            "Подготовка столкновения",
-            use_container_width=True,
-            type="primary" if st.session_state.screen == "prepare" else "secondary",
-        ):
-            st.session_state.screen = "prepare"
-            st.rerun()
-        if st.button(
-            "Проведение боя",
-            use_container_width=True,
-            type="primary" if st.session_state.screen == "battle" else "secondary",
-        ):
-            st.session_state.screen = "battle"
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-
 def main() -> None:
     inject_styles()
 
@@ -1264,14 +1287,10 @@ def main() -> None:
     monsters = load_monster_database(st.session_state.selected_db_title)
     render_monster_sidebar(monsters)
 
-    nav_col, content_col = st.columns([0.95, 4.05], gap="large")
-    with nav_col:
-        render_navigation()
-    with content_col:
-        if st.session_state.screen == "battle" and st.session_state.battle_state:
-            render_battle_screen(monsters)
-        else:
-            render_prepare_screen(monsters)
+    if st.session_state.screen == "battle" and st.session_state.battle_state:
+        render_battle_screen(monsters)
+    else:
+        render_prepare_screen(monsters)
 
 
 if __name__ == "__main__":
