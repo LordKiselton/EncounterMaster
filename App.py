@@ -594,16 +594,18 @@ def inject_styles() -> None:
             position: relative;
             overflow: hidden;
         }
-        .combat-card::before,
-        .encounter-row::before {
-            content: "";
-            position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 6px;
-            background: var(--accent-color, rgba(255,255,255,0.2));
+        .encounter-row {
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        border-left: 6px solid var(--accent-color, rgba(255,255,255,0.2));
         }
+        .combat-card {
+           padding: 12px 14px;
+           margin-bottom: 10px;
+           position: relative;
+           overflow: hidden;
+           border-left: 6px solid var(--accent-color, rgba(255,255,255,0.2));
+}
         .type-chip,
         .status-chip,
         .turn-chip {
