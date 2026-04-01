@@ -56,12 +56,16 @@ COMBATANT_TYPE_LABELS = {
 }
 
 COMBATANT_TYPE_COLORS = {
-    "player": "rgba(59, 130, 246, 0.18)",
-    "npc": "rgba(148, 163, 184, 0.18)",
-    "monster": "rgba(239, 68, 68, 0.18)",
+    "player": "rgba(59, 130, 246, 0.12)",
+    "npc": "rgba(148, 163, 184, 0.12)",
+    "monster": "rgba(239, 68, 68, 0.12)",
 }
 
-ACTIVE_ROW_OUTLINE = "2px solid rgba(250, 204, 21, 0.95)"
+COMBATANT_TYPE_BORDER = {
+    "player": "rgba(96, 165, 250, 0.35)",
+    "npc": "rgba(148, 163, 184, 0.35)",
+    "monster": "rgba(248, 113, 113, 0.35)",
+}
 
 # ============================================================
 # Setup
@@ -178,12 +182,13 @@ def init_state() -> None:
     defaults = {
         "is_authenticated": False,
         "auth_user": None,
-        "screen": "create",
+        "screen": "prepare",
         "selected_db_title": list(MONSTER_DATABASES.keys())[0],
         "create_combatants": [],
         "battle_state": None,
         "selected_monster_sidebar": None,
-        "edit_mode": False,
+        "battle_edit_order_mode": False,
+        "encounter_name_input": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -194,8 +199,16 @@ init_state()
 
 
 # ============================================================
-# Domain factories
+# Domain helpers
 # ============================================================
+
+
+def clone_combatants_with_new_ids(combatants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    cloned = deepcopy(combatants)
+    for combatant in cloned:
+        combatant["id"] = str(uuid.uuid4())
+    return cloned
+
 
 
 def new_combatant(
@@ -231,10 +244,7 @@ def assign_sort_order(combatants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def sort_combatants(combatants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     combatants = assign_sort_order(combatants)
-    return sorted(
-        combatants,
-        key=lambda c: (-int(c["initiative"]), int(c["sort_order"])),
-    )
+    return sorted(combatants, key=lambda c: (-int(c["initiative"]), int(c["sort_order"])))
 
 
 
@@ -242,14 +252,16 @@ def build_encounter_payload(name: str, combatants: List[Dict[str, Any]]) -> Dict
     return {
         "id": str(uuid.uuid4()),
         "name": name.strip(),
-        "combatants": deepcopy(combatants),
+        "combatants": clone_combatants_with_new_ids(combatants),
         "created_at": datetime.utcnow().isoformat(),
     }
 
 
 
 def build_battle_state(encounter: Dict[str, Any]) -> Dict[str, Any]:
-    combatants = sort_combatants(deepcopy(encounter["combatants"]))
+    combatants = sort_combatants(clone_combatants_with_new_ids(encounter["combatants"]))
+    for combatant in combatants:
+        normalize_combatant_hp_and_statuses(combatant)
     return {
         "encounter_id": encounter["id"],
         "encounter_name": encounter["name"],
@@ -271,26 +283,28 @@ def check_credentials(username: str, password: str) -> bool:
 
 
 def render_login() -> None:
-    st.title(APP_TITLE)
-    st.subheader("Вход")
-    st.caption("MVP-авторизация на локальном JSON. Перед публикацией парольное хранение лучше заменить на безопасное.")
-
-    with st.form("login_form"):
-        username = st.text_input("Логин")
-        password = st.text_input("Пароль", type="password")
-        submitted = st.form_submit_button("Войти", use_container_width=True)
-
-    if submitted:
-        if check_credentials(username, password):
-            st.session_state.is_authenticated = True
-            st.session_state.auth_user = username
-            st.rerun()
-        else:
-            st.error("Неверный логин или пароль")
+    _, center, _ = st.columns([1, 1.2, 1])
+    with center:
+        st.markdown("<div class='hero-card'>", unsafe_allow_html=True)
+        st.title(APP_TITLE)
+        st.subheader("Вход")
+        st.caption("MVP-авторизация на локальном JSON. Перед публикацией замени хранение паролей на безопасное.")
+        with st.form("login_form"):
+            username = st.text_input("Логин")
+            password = st.text_input("Пароль", type="password")
+            submitted = st.form_submit_button("Войти", use_container_width=True)
+        if submitted:
+            if check_credentials(username, password):
+                st.session_state.is_authenticated = True
+                st.session_state.auth_user = username
+                st.rerun()
+            else:
+                st.error("Неверный логин или пароль")
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
-# Storage actions
+# Storage
 # ============================================================
 
 
@@ -339,6 +353,7 @@ def duplicate_encounter(encounter_id: str) -> None:
             duplicate["id"] = str(uuid.uuid4())
             duplicate["name"] = f"{encounter['name']} (копия)"
             duplicate["created_at"] = datetime.utcnow().isoformat()
+            duplicate["combatants"] = clone_combatants_with_new_ids(duplicate.get("combatants", []))
             encounters.append(duplicate)
             break
     save_encounters(encounters)
@@ -346,8 +361,7 @@ def duplicate_encounter(encounter_id: str) -> None:
 
 
 def delete_encounter(encounter_id: str) -> None:
-    encounters = [e for e in get_encounters() if e["id"] != encounter_id]
-    save_encounters(encounters)
+    save_encounters([e for e in get_encounters() if e["id"] != encounter_id])
 
 
 
@@ -357,7 +371,7 @@ def add_preset(name: str, combatants: List[Dict[str, Any]]) -> None:
         {
             "id": str(uuid.uuid4()),
             "name": name.strip(),
-            "characters": deepcopy(combatants),
+            "characters": clone_combatants_with_new_ids(combatants),
             "created_at": datetime.utcnow().isoformat(),
         }
     )
@@ -366,8 +380,7 @@ def add_preset(name: str, combatants: List[Dict[str, Any]]) -> None:
 
 
 def delete_preset(preset_id: str) -> None:
-    presets = [p for p in get_presets() if p["id"] != preset_id]
-    save_presets(presets)
+    save_presets([p for p in get_presets() if p["id"] != preset_id])
 
 
 
@@ -379,6 +392,7 @@ def duplicate_preset(preset_id: str) -> None:
             duplicate["id"] = str(uuid.uuid4())
             duplicate["name"] = f"{preset['name']} (копия)"
             duplicate["created_at"] = datetime.utcnow().isoformat()
+            duplicate["characters"] = clone_combatants_with_new_ids(duplicate.get("characters", []))
             presets.append(duplicate)
             break
     save_presets(presets)
@@ -502,7 +516,8 @@ def update_combatant_initiative(combatant_id: str, new_initiative: int) -> None:
     if not battle_state:
         return
 
-    active_id = get_active_combatant(battle_state)["id"] if get_active_combatant(battle_state) else None
+    active = get_active_combatant(battle_state)
+    active_id = active["id"] if active else None
 
     for combatant in battle_state["combatants"]:
         if combatant["id"] == combatant_id:
@@ -525,7 +540,8 @@ def move_combatant(combatant_id: str, direction: str) -> None:
         return
 
     combatants = battle_state["combatants"]
-    active_id = get_active_combatant(battle_state)["id"] if get_active_combatant(battle_state) else None
+    active = get_active_combatant(battle_state)
+    active_id = active["id"] if active else None
 
     index = next((i for i, c in enumerate(combatants) if c["id"] == combatant_id), None)
     if index is None:
@@ -555,31 +571,56 @@ def inject_styles() -> None:
         """
         <style>
         .block-container {
-            padding-top: 1.2rem;
+            padding-top: 1rem;
             padding-bottom: 2rem;
+            max-width: 1500px;
         }
-        .app-card {
+        .hero-card,
+        .app-card,
+        .battle-hero,
+        .encounter-row,
+        .combat-card,
+        .library-card {
             border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 16px;
-            padding: 16px;
-            background: rgba(255,255,255,0.02);
-            margin-bottom: 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 18px;
         }
-        .combat-row {
-            border-radius: 16px;
-            padding: 10px 12px;
-            margin-bottom: 8px;
+        .hero-card { padding: 24px; margin-top: 8vh; }
+        .app-card { padding: 16px; margin-bottom: 14px; }
+        .battle-hero { padding: 18px; margin-bottom: 14px; }
+        .encounter-row { padding: 12px; margin-bottom: 10px; }
+        .combat-card { padding: 12px 14px; margin-bottom: 10px; }
+        .library-card { padding: 12px; margin-bottom: 10px; }
+        .type-chip,
+        .status-chip,
+        .turn-chip {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 4px 10px;
+            margin-right: 6px;
+            margin-top: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
             border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.06);
         }
-        .combat-name-button button {
-            text-align: left !important;
-            justify-content: flex-start !important;
-            width: 100%;
+        .turn-chip {
+            background: rgba(250, 204, 21, 0.18);
+            border-color: rgba(250, 204, 21, 0.35);
         }
-        .small-muted {
-            color: rgba(255,255,255,0.65);
+        .muted-line {
+            color: rgba(255,255,255,0.68);
             font-size: 0.9rem;
         }
+        .top-nav-wrap button {
+            margin-bottom: 6px;
+        }
+        .section-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 0.65rem;
+        }
+        .small-gap { height: 0.35rem; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -588,17 +629,20 @@ def inject_styles() -> None:
 
 
 def header_bar() -> None:
-    left, right = st.columns([0.75, 0.25])
+    left, mid, right = st.columns([1.8, 1.1, 0.7])
     with left:
         st.title(APP_TITLE)
+    with mid:
+        st.markdown("### ")
+        st.caption(f"Пользователь: {st.session_state.auth_user}")
     with right:
-        st.write("")
-        st.write(f"**Пользователь:** {st.session_state.auth_user}")
+        st.markdown("### ")
         if st.button("Выйти", use_container_width=True):
             st.session_state.is_authenticated = False
             st.session_state.auth_user = None
-            st.session_state.screen = "create"
+            st.session_state.screen = "prepare"
             st.session_state.battle_state = None
+            st.session_state.selected_monster_sidebar = None
             st.rerun()
 
 
@@ -623,13 +667,40 @@ def render_status_help() -> None:
 
 
 
+def render_status_chips(statuses: List[str], empty_text: str = "Нет статусов") -> None:
+    if not statuses:
+        st.caption(empty_text)
+        return
+    html = "".join([f"<span class='status-chip'>{status}</span>" for status in statuses])
+    st.markdown(html, unsafe_allow_html=True)
+
+
+
+def hp_ratio(current_hp: int, max_hp: int) -> float:
+    if max_hp <= 0:
+        return 0.0
+    return max(0.0, min(1.0, current_hp / max_hp))
+
+
+
+def render_hp_bar(current_hp: int, max_hp: int) -> None:
+    ratio = hp_ratio(current_hp, max_hp)
+    st.progress(ratio, text=f"{current_hp} / {max_hp} HP")
+
+
+
 def render_monster_sidebar(monsters: List[Dict[str, Any]]) -> None:
     with st.sidebar:
         st.header("Карточка монстра")
         selected_name = st.session_state.selected_monster_sidebar
         if not selected_name:
-            st.info("Нажми на имя монстра в бою, чтобы открыть его карточку.")
+            st.info("Кликни по имени монстра в бою, чтобы открыть его карточку.")
             return
+
+        close_col, _ = st.columns([1, 2])
+        if close_col.button("Закрыть карточку", use_container_width=True):
+            st.session_state.selected_monster_sidebar = None
+            st.rerun()
 
         monster = get_monster_by_name(monsters, selected_name)
         if not monster:
@@ -639,21 +710,20 @@ def render_monster_sidebar(monsters: List[Dict[str, Any]]) -> None:
         st.subheader(monster["name"])
         if monster["img_url"]:
             st.image(monster["img_url"], use_container_width=True)
-
         st.caption(monster["meta"])
         st.markdown(f"**Класс брони:** {monster['armor_class_raw']}")
         st.markdown(f"**Хиты:** {monster['hit_points_raw']}")
         st.markdown(f"**Скорость:** {monster['speed']}")
 
         st.markdown("### Характеристики")
-        cols = st.columns(3)
-        cols[0].markdown(f"**STR**  {monster['str']} {monster['str_mod']}")
-        cols[1].markdown(f"**DEX**  {monster['dex']} {monster['dex_mod']}")
-        cols[2].markdown(f"**CON**  {monster['con']} {monster['con_mod']}")
-        cols = st.columns(3)
-        cols[0].markdown(f"**INT**  {monster['int']} {monster['int_mod']}")
-        cols[1].markdown(f"**WIS**  {monster['wis']} {monster['wis_mod']}")
-        cols[2].markdown(f"**CHA**  {monster['cha']} {monster['cha_mod']}")
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"**STR**  {monster['str']} {monster['str_mod']}")
+        c2.markdown(f"**DEX**  {monster['dex']} {monster['dex_mod']}")
+        c3.markdown(f"**CON**  {monster['con']} {monster['con_mod']}")
+        c4, c5, c6 = st.columns(3)
+        c4.markdown(f"**INT**  {monster['int']} {monster['int_mod']}")
+        c5.markdown(f"**WIS**  {monster['wis']} {monster['wis_mod']}")
+        c6.markdown(f"**CHA**  {monster['cha']} {monster['cha_mod']}")
 
         st.markdown(f"**Спасброски:** {monster['saving_throws']}")
         st.markdown(f"**Навыки:** {monster['skills']}")
@@ -664,11 +734,9 @@ def render_monster_sidebar(monsters: List[Dict[str, Any]]) -> None:
         if monster["traits"]:
             st.markdown("### Особенности")
             st.markdown(monster["traits"], unsafe_allow_html=True)
-
         if monster["actions"]:
             st.markdown("### Действия")
             st.markdown(monster["actions"], unsafe_allow_html=True)
-
         if monster["legendary_actions"]:
             st.markdown("### Легендарные действия")
             st.markdown(monster["legendary_actions"], unsafe_allow_html=True)
@@ -679,25 +747,73 @@ def render_monster_sidebar(monsters: List[Dict[str, Any]]) -> None:
 # ============================================================
 
 
-def render_add_manual_combatant() -> None:
-    st.markdown("### Добавить игрока / NPC")
+def render_prepare_action_bar() -> None:
+    st.subheader("Подготовка столкновения")
+    c1, c2, c3, c4, c5 = st.columns([1.4, 1.2, 1.0, 1.0, 1.0])
+    with c1:
+        st.session_state.encounter_name_input = st.text_input(
+            "Название столкновения",
+            value=st.session_state.encounter_name_input,
+            key="encounter_name_input_widget",
+        )
+    with c2:
+        st.session_state.selected_db_title = st.selectbox(
+            "База монстров",
+            options=list(MONSTER_DATABASES.keys()),
+            index=list(MONSTER_DATABASES.keys()).index(st.session_state.selected_db_title),
+        )
+    with c3:
+        st.markdown("<div class='small-gap'></div>", unsafe_allow_html=True)
+        if st.button("Сохранить столкновение", use_container_width=True):
+            if not st.session_state.encounter_name_input.strip():
+                st.error("Укажи название столкновения")
+            elif not st.session_state.create_combatants:
+                st.error("Добавь хотя бы одного участника")
+            else:
+                payload = build_encounter_payload(
+                    st.session_state.encounter_name_input,
+                    st.session_state.create_combatants,
+                )
+                add_encounter(payload)
+                st.success("Столкновение сохранено")
+    with c4:
+        st.markdown("<div class='small-gap'></div>", unsafe_allow_html=True)
+        if st.button("Начать бой", use_container_width=True, type="primary"):
+            if not st.session_state.create_combatants:
+                st.error("Сначала добавь участников")
+            else:
+                temp_encounter = build_encounter_payload(
+                    st.session_state.encounter_name_input.strip() or "Несохранённое столкновение",
+                    st.session_state.create_combatants,
+                )
+                st.session_state.battle_state = build_battle_state(temp_encounter)
+                st.session_state.screen = "battle"
+                st.rerun()
+    with c5:
+        st.markdown("<div class='small-gap'></div>", unsafe_allow_html=True)
+        if st.button("Очистить состав", use_container_width=True):
+            st.session_state.create_combatants = []
+            st.rerun()
+
+
+
+def render_add_manual_combatant_tab() -> None:
     with st.form("add_manual_combatant_form", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        c1, c2 = st.columns(2)
+        with c1:
             name = st.text_input("Имя")
             combatant_type = st.selectbox(
                 "Тип",
                 options=["player", "npc"],
                 format_func=lambda x: COMBATANT_TYPE_LABELS[x],
             )
-        with col2:
+            initiative = st.number_input("Инициатива", value=0, step=1)
+        with c2:
             max_hp = st.number_input("Макс HP", min_value=1, value=10, step=1)
             current_hp = st.number_input("Текущий HP", min_value=0, value=10, step=1)
-        with col3:
             armor_class = st.number_input("Класс брони", min_value=0, value=10, step=1)
-            initiative = st.number_input("Инициатива", value=0, step=1)
 
-        submitted = st.form_submit_button("Добавить", use_container_width=True)
+        submitted = st.form_submit_button("Добавить участника", use_container_width=True)
 
     if submitted:
         if not name.strip():
@@ -717,9 +833,7 @@ def render_add_manual_combatant() -> None:
 
 
 
-def render_add_monster(monsters: List[Dict[str, Any]]) -> None:
-    st.markdown("### Добавить монстра")
-
+def render_add_monster_tab(monsters: List[Dict[str, Any]]) -> None:
     search = st.text_input("Поиск по имени монстра", placeholder="Например, Aboleth")
     filtered = monsters
     if search.strip():
@@ -728,53 +842,128 @@ def render_add_monster(monsters: List[Dict[str, Any]]) -> None:
 
     options = [m["name"] for m in filtered[:200]]
     selected_name = st.selectbox("Выбери монстра", options=options if options else [""], index=0)
-
     monster = get_monster_by_name(monsters, selected_name) if selected_name else None
-    if monster:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("AC", monster["armor_class_value"])
-        c2.metric("HP", monster["hit_points_value"])
-        c3.caption(monster["meta"])
-        c4.write("")
 
-        with st.form("add_monster_form", clear_on_submit=True):
-            left, mid, right = st.columns(3)
-            with left:
-                custom_name = st.text_input("Имя в бою", value=monster["name"])
-            with mid:
-                initiative = st.number_input("Инициатива", value=0, step=1, key="monster_init_input")
-            with right:
-                use_edit_mode = st.checkbox("Редактировать AC/HP при добавлении")
+    if not monster:
+        st.info("Выбери монстра из списка")
+        return
 
+    preview_left, preview_right = st.columns([1.1, 1.4])
+    with preview_left:
+        st.markdown("**Предпросмотр**")
+        st.markdown(f"**{monster['name']}**")
+        st.caption(monster["meta"])
+        st.markdown(f"Класс брони: **{monster['armor_class_value']}**")
+        st.markdown(f"Хиты: **{monster['hit_points_value']}**")
+    with preview_right:
+        if monster["img_url"]:
+            st.image(monster["img_url"], width=180)
+
+    with st.form("add_monster_form", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            custom_name = st.text_input("Имя в бою", value=monster["name"])
+            initiative = st.number_input("Инициатива", value=0, step=1, key="monster_init_input")
+        with c2:
+            use_edit_mode = st.checkbox("Изменить параметры перед добавлением")
             edit_ac = monster["armor_class_value"]
             edit_hp = monster["hit_points_value"]
             if use_edit_mode:
-                ec1, ec2 = st.columns(2)
-                with ec1:
-                    edit_ac = st.number_input("AC (override)", min_value=0, value=monster["armor_class_value"], step=1)
-                with ec2:
-                    edit_hp = st.number_input("HP (override)", min_value=1, value=monster["hit_points_value"], step=1)
+                edit_ac = st.number_input("Класс брони (override)", min_value=0, value=monster["armor_class_value"], step=1)
+                edit_hp = st.number_input("HP (override)", min_value=1, value=monster["hit_points_value"], step=1)
 
-            submitted = st.form_submit_button("Добавить монстра", use_container_width=True)
+        submitted = st.form_submit_button("Добавить монстра", use_container_width=True)
 
-        if submitted:
-            combatant = new_combatant(
-                name=custom_name or monster["name"],
-                combatant_type="monster",
-                max_hp=int(edit_hp),
-                current_hp=int(edit_hp),
-                armor_class=int(edit_ac),
-                initiative=int(initiative),
-                monster_ref=monster["name"],
+    if submitted:
+        combatant = new_combatant(
+            name=custom_name or monster["name"],
+            combatant_type="monster",
+            max_hp=int(edit_hp),
+            current_hp=int(edit_hp),
+            armor_class=int(edit_ac),
+            initiative=int(initiative),
+            monster_ref=monster["name"],
+        )
+        st.session_state.create_combatants.append(combatant)
+        st.session_state.create_combatants = sort_combatants(st.session_state.create_combatants)
+        st.success(f"Монстр добавлен: {combatant['name']}")
+
+
+
+def render_presets_tab() -> None:
+    presets = get_presets()
+
+    st.markdown("**Сохранить новый пресет**")
+    p1, p2 = st.columns([1.2, 1.1])
+    with p1:
+        preset_name = st.text_input("Название пресета", key="new_preset_name")
+    with p2:
+        save_scope = st.radio(
+            "Что сохранить",
+            options=["Текущий состав", "Только игроки и NPC"],
+            horizontal=True,
+        )
+    if st.button("Сохранить как пресет", use_container_width=True):
+        roster = st.session_state.create_combatants
+        if save_scope == "Только игроки и NPC":
+            roster = [c for c in roster if c["type"] in {"player", "npc"}]
+        if not preset_name.strip():
+            st.error("Укажи название пресета")
+        elif not roster:
+            st.error("Нет участников для сохранения")
+        else:
+            add_preset(preset_name, roster)
+            st.success("Пресет сохранён")
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("**Список пресетов**")
+    if not presets:
+        st.info("Пока нет сохранённых пресетов")
+        return
+
+    for preset in presets:
+        with st.container(border=True):
+            st.markdown(f"**{preset['name']}**")
+            st.caption(f"Участников: {len(preset.get('characters', []))}")
+            b1, b2, b3 = st.columns([1.0, 1.0, 1.0])
+            if b1.button("Загрузить", key=f"load_preset_{preset['id']}", use_container_width=True):
+                st.session_state.create_combatants.extend(
+                    clone_combatants_with_new_ids(preset.get("characters", []))
+                )
+                st.session_state.create_combatants = sort_combatants(st.session_state.create_combatants)
+                st.rerun()
+            if b2.button("Дублировать", key=f"dup_preset_{preset['id']}", use_container_width=True):
+                duplicate_preset(preset["id"])
+                st.rerun()
+            if b3.button("Удалить", key=f"del_preset_{preset['id']}", use_container_width=True):
+                delete_preset(preset["id"])
+                st.rerun()
+
+            rn1, rn2 = st.columns([2.2, 1.0])
+            new_name = rn1.text_input(
+                "Новое имя",
+                value=preset["name"],
+                key=f"preset_name_input_{preset['id']}",
+                label_visibility="collapsed",
             )
-            st.session_state.create_combatants.append(combatant)
-            st.session_state.create_combatants = sort_combatants(st.session_state.create_combatants)
-            st.success(f"Монстр добавлен: {combatant['name']}")
+            if rn2.button("Переименовать", key=f"rename_preset_{preset['id']}", use_container_width=True):
+                rename_preset(preset["id"], new_name)
+                st.rerun()
+
+            st.download_button(
+                "Скачать JSON",
+                data=json.dumps(preset, ensure_ascii=False, indent=2),
+                file_name=f"preset_{preset['name']}.json",
+                mime="application/json",
+                key=f"download_preset_{preset['id']}",
+                use_container_width=True,
+            )
 
 
 
-def render_create_roster_table() -> None:
-    st.markdown("### Участники столкновения")
+def render_prepare_roster() -> None:
+    st.markdown("<div class='section-title'>Текущий состав столкновения</div>", unsafe_allow_html=True)
     combatants = st.session_state.create_combatants
     if not combatants:
         st.info("Список пуст. Добавь игроков, NPC или монстров.")
@@ -782,90 +971,32 @@ def render_create_roster_table() -> None:
 
     for idx, combatant in enumerate(combatants):
         bg = COMBATANT_TYPE_COLORS.get(combatant["type"], "rgba(255,255,255,0.04)")
+        border = COMBATANT_TYPE_BORDER.get(combatant["type"], "rgba(255,255,255,0.14)")
         st.markdown(
-            f"<div class='combat-row' style='background:{bg};'>",
+            f"<div class='encounter-row' style='background:{bg}; border-color:{border};'>",
             unsafe_allow_html=True,
         )
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([0.5, 2.0, 1.1, 0.9, 1.0, 1.0, 1.2])
-        c1.markdown(f"**{idx + 1}.**")
-        c2.markdown(f"**{combatant['name']}**")
-        c3.markdown(combatant_type_badge(combatant["type"]))
-        c4.markdown(f"AC: **{combatant['armor_class']}**")
-        c5.markdown(f"HP: **{combatant['current_hp']}/{combatant['max_hp']}**")
-        c6.markdown(f"Init: **{combatant['initiative']}**")
-        if c7.button("Удалить", key=f"remove_create_{combatant['id']}", use_container_width=True):
-            st.session_state.create_combatants = [c for c in combatants if c["id"] != combatant["id"]]
-            st.session_state.create_combatants = sort_combatants(st.session_state.create_combatants)
-            st.rerun()
+        c1, c2, c3, c4 = st.columns([0.55, 2.2, 1.4, 0.9])
+        with c1:
+            st.markdown(f"### {idx + 1}")
+        with c2:
+            st.markdown(f"**{combatant['name']}**")
+            st.markdown(f"<span class='type-chip'>{combatant_type_badge(combatant['type'])}</span>", unsafe_allow_html=True)
+        with c3:
+            st.markdown(f"**Класс брони:** {combatant['armor_class']}")
+            st.markdown(f"**HP:** {combatant['current_hp']} / {combatant['max_hp']}")
+            st.markdown(f"**Инициатива:** {combatant['initiative']}")
+        with c4:
+            if st.button("Удалить", key=f"remove_create_{combatant['id']}", use_container_width=True):
+                st.session_state.create_combatants = [c for c in combatants if c["id"] != combatant["id"]]
+                st.session_state.create_combatants = sort_combatants(st.session_state.create_combatants)
+                st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 
 
-def render_presets_block() -> None:
-    st.markdown("### Пресеты")
-    presets = get_presets()
-
-    left, right = st.columns([1.1, 1.3])
-    with left:
-        preset_name = st.text_input("Название нового пресета", key="new_preset_name")
-        save_scope = st.radio(
-            "Что сохранить",
-            options=["Текущий состав", "Только игроков и NPC"],
-            horizontal=True,
-        )
-        if st.button("Сохранить как пресет", use_container_width=True):
-            roster = st.session_state.create_combatants
-            if save_scope == "Только игроков и NPC":
-                roster = [c for c in roster if c["type"] in {"player", "npc"}]
-            if not preset_name.strip():
-                st.error("Укажи название пресета")
-            elif not roster:
-                st.error("Нет участников для сохранения")
-            else:
-                add_preset(preset_name, roster)
-                st.success("Пресет сохранён")
-                st.rerun()
-
-    with right:
-        if not presets:
-            st.info("Пока нет сохранённых пресетов")
-        else:
-            for preset in presets:
-                with st.container(border=True):
-                    st.markdown(f"**{preset['name']}**")
-                    st.caption(f"Участников: {len(preset.get('characters', []))}")
-                    a, b, c, d, e = st.columns(5)
-                    if a.button("Загрузить", key=f"load_preset_{preset['id']}", use_container_width=True):
-                        st.session_state.create_combatants.extend(deepcopy(preset.get("characters", [])))
-                        st.session_state.create_combatants = sort_combatants(st.session_state.create_combatants)
-                        st.success(f"Загружен пресет: {preset['name']}")
-                        st.rerun()
-                    if b.button("Дубль", key=f"dup_preset_{preset['id']}", use_container_width=True):
-                        duplicate_preset(preset["id"])
-                        st.rerun()
-                    if c.button("JSON", key=f"download_preset_{preset['id']}", use_container_width=True):
-                        pass
-                    new_name = d.text_input("", value=preset["name"], label_visibility="collapsed", key=f"rename_preset_input_{preset['id']}")
-                    if d.button("Переим.", key=f"rename_preset_{preset['id']}", use_container_width=True):
-                        rename_preset(preset["id"], new_name)
-                        st.rerun()
-                    if e.button("Удалить", key=f"delete_preset_{preset['id']}", use_container_width=True):
-                        delete_preset(preset["id"])
-                        st.rerun()
-
-                    st.download_button(
-                        "Скачать JSON",
-                        data=json.dumps(preset, ensure_ascii=False, indent=2),
-                        file_name=f"preset_{preset['name']}.json",
-                        mime="application/json",
-                        key=f"download_real_preset_{preset['id']}",
-                        use_container_width=True,
-                    )
-
-
-
 def render_saved_encounters_block() -> None:
-    st.markdown("### Сохранённые столкновения")
+    st.markdown("<div class='section-title'>Сохранённые столкновения</div>", unsafe_allow_html=True)
     encounters = get_encounters()
     if not encounters:
         st.info("Сохранённых столкновений пока нет")
@@ -875,83 +1006,68 @@ def render_saved_encounters_block() -> None:
         with st.container(border=True):
             st.markdown(f"**{encounter['name']}**")
             st.caption(f"Участников: {len(encounter.get('combatants', []))}")
-            c1, c2, c3, c4 = st.columns([1.2, 1.0, 1.5, 1.0])
-            if c1.button("Запустить бой", key=f"start_saved_{encounter['id']}", use_container_width=True):
+            a1, a2, a3 = st.columns([1.1, 1.0, 1.0])
+            if a1.button("Запустить бой", key=f"start_enc_{encounter['id']}", use_container_width=True):
                 st.session_state.battle_state = build_battle_state(encounter)
                 st.session_state.screen = "battle"
                 st.rerun()
-            if c2.button("Дублировать", key=f"dup_enc_{encounter['id']}", use_container_width=True):
+            if a2.button("Дублировать", key=f"dup_enc_{encounter['id']}", use_container_width=True):
                 duplicate_encounter(encounter["id"])
                 st.rerun()
-            new_name = c3.text_input("", value=encounter["name"], label_visibility="collapsed", key=f"enc_name_{encounter['id']}")
-            if c3.button("Переименовать", key=f"rename_enc_{encounter['id']}", use_container_width=True):
-                update_encounter_name(encounter["id"], new_name)
-                st.rerun()
-            if c4.button("Удалить", key=f"del_enc_{encounter['id']}", use_container_width=True):
+            if a3.button("Удалить", key=f"del_enc_{encounter['id']}", use_container_width=True):
                 delete_encounter(encounter["id"])
                 st.rerun()
 
+            r1, r2 = st.columns([2.2, 1.0])
+            new_name = r1.text_input(
+                "Новое имя столкновения",
+                value=encounter["name"],
+                key=f"enc_name_input_{encounter['id']}",
+                label_visibility="collapsed",
+            )
+            if r2.button("Переименовать", key=f"rename_enc_{encounter['id']}", use_container_width=True):
+                update_encounter_name(encounter["id"], new_name)
+                st.rerun()
 
 
-def render_create_screen(monsters: List[Dict[str, Any]]) -> None:
-    st.subheader("Создание боевого столкновения")
 
-    toolbar_left, toolbar_mid, toolbar_right = st.columns([1.2, 1.2, 1.6])
-    with toolbar_left:
-        st.session_state.selected_db_title = st.selectbox(
-            "База монстров",
-            options=list(MONSTER_DATABASES.keys()),
-            index=list(MONSTER_DATABASES.keys()).index(st.session_state.selected_db_title),
-        )
-    with toolbar_mid:
-        encounter_name = st.text_input("Название столкновения", key="encounter_name_input")
-    with toolbar_right:
-        st.write("")
-        st.write("")
-        save_clicked = st.button("Сохранить столкновение", use_container_width=True)
+def render_prepare_screen(monsters: List[Dict[str, Any]]) -> None:
+    render_prepare_action_bar()
 
-    if save_clicked:
-        if not encounter_name.strip():
-            st.error("Укажи название столкновения")
-        elif not st.session_state.create_combatants:
-            st.error("Добавь хотя бы одного участника")
-        else:
-            payload = build_encounter_payload(encounter_name, st.session_state.create_combatants)
-            add_encounter(payload)
-            st.success("Столкновение сохранено")
+    left, right = st.columns([1.1, 0.9], gap="large")
 
-    left, right = st.columns([1.15, 1.0])
     with left:
         with st.container(border=True):
-            render_add_manual_combatant()
-        with st.container(border=True):
-            render_add_monster(monsters)
+            tabs = st.tabs(["Игрок / NPC", "Монстр", "Пресеты"])
+            with tabs[0]:
+                render_add_manual_combatant_tab()
+            with tabs[1]:
+                render_add_monster_tab(monsters)
+            with tabs[2]:
+                render_presets_tab()
+
     with right:
         with st.container(border=True):
-            render_create_roster_table()
-            a, b = st.columns(2)
-            if a.button("Очистить список", use_container_width=True):
+            render_prepare_roster()
+            c1, c2 = st.columns(2)
+            if c1.button("Очистить состав", key="clear_prepare_roster_secondary", use_container_width=True):
                 st.session_state.create_combatants = []
                 st.rerun()
-            if b.button("Начать бой", use_container_width=True, type="primary"):
+            if c2.button("Начать бой", key="start_battle_secondary", use_container_width=True, type="primary"):
                 if not st.session_state.create_combatants:
                     st.error("Сначала добавь участников")
                 else:
                     temp_encounter = build_encounter_payload(
-                        encounter_name.strip() or "Несохранённое столкновение",
+                        st.session_state.encounter_name_input.strip() or "Несохранённое столкновение",
                         st.session_state.create_combatants,
                     )
                     st.session_state.battle_state = build_battle_state(temp_encounter)
                     st.session_state.screen = "battle"
                     st.rerun()
 
-    c1, c2 = st.columns([1.05, 1.15])
-    with c1:
-        with st.container(border=True):
-            render_presets_block()
-    with c2:
-        with st.container(border=True):
-            render_saved_encounters_block()
+    st.markdown("---")
+    with st.container(border=True):
+        render_saved_encounters_block()
 
 
 # ============================================================
@@ -966,129 +1082,174 @@ def render_battle_header() -> None:
         return
 
     active = get_active_combatant(battle_state)
-    left, mid, right = st.columns([1.1, 1.1, 1.2])
-    left.metric("Раунд", battle_state["round"])
-    mid.metric("Ход", battle_state["turn_index"] + 1 if battle_state["combatants"] else 0)
-    right.metric("Активный участник", active["name"] if active else "—")
+    st.markdown("<div class='battle-hero'>", unsafe_allow_html=True)
+    st.markdown(f"### {battle_state['encounter_name']}")
+    current_turn = battle_state["turn_index"] + 1 if battle_state["combatants"] else 0
+    active_name = active["name"] if active else "—"
+    st.markdown(f"**Раунд {battle_state['round']} · Ход {current_turn} · Сейчас ходит: {active_name}**")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    a, b = st.columns([1.3, 1.0])
-    if a.button("Следующий ход", type="primary", use_container_width=True):
+    b1, b2, b3 = st.columns([1.1, 1.1, 1.0])
+    if b1.button("Следующий ход", use_container_width=True, type="primary"):
         next_turn()
         st.rerun()
-    if b.button("Завершить бой", use_container_width=True):
+    if b2.button(
+        "Редактировать порядок" if not st.session_state.battle_edit_order_mode else "Завершить редактирование",
+        use_container_width=True,
+    ):
+        st.session_state.battle_edit_order_mode = not st.session_state.battle_edit_order_mode
+        st.rerun()
+    if b3.button("Завершить бой", use_container_width=True):
         st.session_state.battle_state = None
         st.session_state.selected_monster_sidebar = None
-        st.session_state.screen = "create"
+        st.session_state.battle_edit_order_mode = False
+        st.session_state.screen = "prepare"
         st.rerun()
 
 
 
-def render_battle_table(monsters: List[Dict[str, Any]]) -> None:
-    battle_state = st.session_state.battle_state
-    if not battle_state or not battle_state["combatants"]:
-        st.info("Нет участников в текущем бою")
-        return
+def render_status_editor(combatant: Dict[str, Any]) -> None:
+    selected_statuses = st.multiselect(
+        "Статусы",
+        options=list(STATUS_LIBRARY.keys()),
+        default=combatant.get("statuses", []),
+        help="; ".join([f"{k}: {v}" for k, v in STATUS_LIBRARY.items()]),
+        key=f"status_editor_{combatant['id']}",
+    )
+    if st.button("Применить статусы", key=f"apply_statuses_{combatant['id']}", use_container_width=True):
+        update_combatant_statuses(combatant["id"], selected_statuses)
+        st.rerun()
 
-    st.markdown("### Бой")
-    render_status_help()
 
-    combatants = battle_state["combatants"]
-    active_id = get_active_combatant(battle_state)["id"] if get_active_combatant(battle_state) else None
 
-    header_cols = st.columns([0.45, 2.0, 0.9, 0.8, 1.0, 1.55, 0.95, 1.3, 0.55, 0.55])
-    headers = ["#", "Имя", "Тип", "AC", "HP", "Статусы", "Инициатива", "HP-изменение", "↑", "↓"]
-    for col, title in zip(header_cols, headers):
-        col.markdown(f"**{title}**")
+def render_order_editor(combatant: Dict[str, Any]) -> None:
+    c1, c2, c3 = st.columns([1.2, 1.0, 1.0])
+    new_init = c1.number_input(
+        "Инициатива",
+        value=int(combatant["initiative"]),
+        step=1,
+        key=f"order_init_{combatant['id']}",
+    )
+    if c2.button("Вверх", key=f"move_up_{combatant['id']}", use_container_width=True):
+        move_combatant(combatant["id"], "up")
+        st.rerun()
+    if c3.button("Вниз", key=f"move_down_{combatant['id']}", use_container_width=True):
+        move_combatant(combatant["id"], "down")
+        st.rerun()
 
-    for idx, combatant in enumerate(combatants):
-        normalize_combatant_hp_and_statuses(combatant)
-        is_active = combatant["id"] == active_id
-        bg = COMBATANT_TYPE_COLORS.get(combatant["type"], "rgba(255,255,255,0.04)")
-        outline = ACTIVE_ROW_OUTLINE if is_active else "1px solid rgba(255,255,255,0.08)"
+    if int(new_init) != int(combatant["initiative"]):
+        update_combatant_initiative(combatant["id"], int(new_init))
+        st.rerun()
 
-        st.markdown(
-            f"<div class='combat-row' style='background:{bg}; border:{outline};'>",
-            unsafe_allow_html=True,
-        )
 
-        cols = st.columns([0.45, 2.0, 0.9, 0.8, 1.0, 1.55, 0.95, 1.3, 0.55, 0.55])
-        cols[0].markdown(f"**{idx + 1}**")
 
-        with cols[1]:
+def render_combatant_card(combatant: Dict[str, Any], index: int, is_active: bool) -> None:
+    normalize_combatant_hp_and_statuses(combatant)
+
+    bg = COMBATANT_TYPE_COLORS.get(combatant["type"], "rgba(255,255,255,0.04)")
+    border = COMBATANT_TYPE_BORDER.get(combatant["type"], "rgba(255,255,255,0.14)")
+    active_shadow = "0 0 0 2px rgba(250, 204, 21, 0.55) inset;" if is_active else ""
+    is_disabled = combatant["current_hp"] <= 0
+    opacity = "0.65" if is_disabled else "1"
+
+    st.markdown(
+        f"<div class='combat-card' style='background:{bg}; border-color:{border}; box-shadow:{active_shadow}; opacity:{opacity};'>",
+        unsafe_allow_html=True,
+    )
+    left, center, right = st.columns([1.45, 1.25, 1.25], gap="medium")
+
+    with left:
+        title_cols = st.columns([0.25, 1.75])
+        title_cols[0].markdown(f"### {index + 1}")
+        with title_cols[1]:
             if combatant["type"] == "monster":
-                with st.container(key=f"name_wrap_{combatant['id']}"):
-                    st.markdown("<div class='combat-name-button'>", unsafe_allow_html=True)
-                    if st.button(combatant["name"], key=f"monster_open_{combatant['id']}", use_container_width=True):
-                        st.session_state.selected_monster_sidebar = combatant.get("monster_ref") or combatant["name"]
-                        st.rerun()
-                    st.markdown("</div>", unsafe_allow_html=True)
+                if st.button(combatant["name"], key=f"open_monster_{combatant['id']}", use_container_width=True):
+                    st.session_state.selected_monster_sidebar = combatant.get("monster_ref") or combatant["name"]
+                    st.rerun()
             else:
-                cols[1].markdown(f"**{combatant['name']}**")
+                st.markdown(f"**{combatant['name']}**")
+            chips = [f"<span class='type-chip'>{combatant_type_badge(combatant['type'])}</span>"]
+            if is_active:
+                chips.append("<span class='turn-chip'>ХОД</span>")
+            st.markdown("".join(chips), unsafe_allow_html=True)
+            st.caption(f"Инициатива: {combatant['initiative']} · Класс брони: {combatant['armor_class']}")
 
-        cols[2].markdown(combatant_type_badge(combatant["type"]))
-        cols[3].markdown(str(combatant["armor_class"]))
-        cols[4].markdown(f"**{combatant['current_hp']} / {combatant['max_hp']}**")
+    with center:
+        st.markdown("**HP**")
+        render_hp_bar(int(combatant["current_hp"]), int(combatant["max_hp"]))
+        st.markdown("**Статусы**")
+        render_status_chips(combatant.get("statuses", []))
+        with st.expander("Изменить статусы"):
+            render_status_editor(combatant)
 
-        current_statuses = cols[5].multiselect(
-            "Статусы",
-            options=list(STATUS_LIBRARY.keys()),
-            default=combatant.get("statuses", []),
-            label_visibility="collapsed",
-            help="; ".join([f"{k}: {v}" for k, v in STATUS_LIBRARY.items()]),
-            key=f"statuses_{combatant['id']}",
-        )
-        if sorted(current_statuses) != sorted(combatant.get("statuses", [])):
-            update_combatant_statuses(combatant["id"], current_statuses)
-            st.rerun()
-
-        initiative_value = cols[6].number_input(
-            "Инициатива",
-            value=int(combatant["initiative"]),
+    with right:
+        st.markdown("**Изменение HP**")
+        hp_delta = st.number_input(
+            "Значение изменения HP",
+            value=0,
             step=1,
+            key=f"hp_delta_{combatant['id']}",
             label_visibility="collapsed",
-            key=f"init_{combatant['id']}",
         )
-        if int(initiative_value) != int(combatant["initiative"]):
-            update_combatant_initiative(combatant["id"], int(initiative_value))
+        h1, h2 = st.columns(2)
+        if h1.button("Урон", key=f"damage_{combatant['id']}", use_container_width=True):
+            apply_hp_delta(combatant["id"], -abs(int(hp_delta)))
+            st.rerun()
+        if h2.button("Лечение", key=f"heal_{combatant['id']}", use_container_width=True):
+            apply_hp_delta(combatant["id"], abs(int(hp_delta)))
             st.rerun()
 
-        with cols[7]:
-            hp_delta = st.number_input(
-                "HP delta",
-                value=0,
-                step=1,
-                label_visibility="collapsed",
-                key=f"hp_delta_{combatant['id']}",
-            )
-            d1, d2 = st.columns(2)
-            if d1.button("Урон", key=f"damage_{combatant['id']}", use_container_width=True):
-                apply_hp_delta(combatant["id"], -abs(int(hp_delta)))
-                st.rerun()
-            if d2.button("Леч.", key=f"heal_{combatant['id']}", use_container_width=True):
-                apply_hp_delta(combatant["id"], abs(int(hp_delta)))
-                st.rerun()
+        if st.session_state.battle_edit_order_mode:
+            st.markdown("---")
+            st.markdown("**Редактирование порядка**")
+            render_order_editor(combatant)
 
-        if cols[8].button("↑", key=f"up_{combatant['id']}", use_container_width=True):
-            move_combatant(combatant["id"], "up")
-            st.rerun()
-
-        if cols[9].button("↓", key=f"down_{combatant['id']}", use_container_width=True):
-            move_combatant(combatant["id"], "down")
-            st.rerun()
-
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 
 def render_battle_screen(monsters: List[Dict[str, Any]]) -> None:
     st.subheader("Проведение боя")
     render_battle_header()
-    render_battle_table(monsters)
+    render_status_help()
+
+    battle_state = st.session_state.battle_state
+    if not battle_state or not battle_state["combatants"]:
+        st.info("Нет участников в текущем бою")
+        return
+
+    active = get_active_combatant(battle_state)
+    active_id = active["id"] if active else None
+
+    for index, combatant in enumerate(battle_state["combatants"]):
+        render_combatant_card(combatant, index, combatant["id"] == active_id)
 
 
 # ============================================================
 # Main
 # ============================================================
+
+
+def render_navigation() -> None:
+    with st.container(border=True):
+        st.markdown("<div class='top-nav-wrap'>", unsafe_allow_html=True)
+        st.markdown("**Навигация**")
+        if st.button(
+            "Подготовка столкновения",
+            use_container_width=True,
+            type="primary" if st.session_state.screen == "prepare" else "secondary",
+        ):
+            st.session_state.screen = "prepare"
+            st.rerun()
+        if st.button(
+            "Проведение боя",
+            use_container_width=True,
+            type="primary" if st.session_state.screen == "battle" else "secondary",
+        ):
+            st.session_state.screen = "battle"
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 def main() -> None:
@@ -1103,21 +1264,14 @@ def main() -> None:
     monsters = load_monster_database(st.session_state.selected_db_title)
     render_monster_sidebar(monsters)
 
-    tabs_left, tabs_right = st.columns([1.0, 4.5])
-    with tabs_left:
-        st.markdown("### Навигация")
-        if st.button("Создание боя", use_container_width=True, type="primary" if st.session_state.screen == "create" else "secondary"):
-            st.session_state.screen = "create"
-            st.rerun()
-        if st.button("Бой", use_container_width=True, type="primary" if st.session_state.screen == "battle" else "secondary"):
-            st.session_state.screen = "battle"
-            st.rerun()
-
-    with tabs_right:
+    nav_col, content_col = st.columns([0.95, 4.05], gap="large")
+    with nav_col:
+        render_navigation()
+    with content_col:
         if st.session_state.screen == "battle" and st.session_state.battle_state:
             render_battle_screen(monsters)
         else:
-            render_create_screen(monsters)
+            render_prepare_screen(monsters)
 
 
 if __name__ == "__main__":
