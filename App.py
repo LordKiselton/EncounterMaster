@@ -187,6 +187,7 @@ def init_state() -> None:
         "create_combatants": [],
         "battle_state": None,
         "selected_monster_sidebar": None,
+        "show_monster_modal": False,
         "battle_edit_order_mode": False,
         "encounter_name_input": "",
     }
@@ -641,19 +642,7 @@ def inject_styles() -> None:
 
 
 def header_bar() -> None:
-    left, right = st.columns([1.8, 0.7])
-    with left:
-        st.title(APP_TITLE)
-    with right:
-        st.markdown("### ")
-        st.caption(f"Пользователь: {st.session_state.auth_user}")
-        if st.button("Выйти", use_container_width=True):
-            st.session_state.is_authenticated = False
-            st.session_state.auth_user = None
-            st.session_state.screen = "prepare"
-            st.session_state.battle_state = None
-            st.session_state.selected_monster_sidebar = None
-            st.rerun()
+    st.title(APP_TITLE)
 
 
 
@@ -720,50 +709,15 @@ def render_monster_sidebar(monsters: List[Dict[str, Any]]) -> None:
             st.rerun()
 
         st.markdown("---")
-        st.header("Карточка монстра")
-        selected_name = st.session_state.selected_monster_sidebar
-        if not selected_name:
-            st.info("Кликни по имени монстра в бою, чтобы открыть его карточку.")
-            return
-
-        monster = get_monster_by_name(monsters, selected_name)
-        if not monster:
-            st.warning("Монстр не найден в выбранной базе.")
-            return
-
-        st.subheader(monster["name"])
-        if monster["img_url"]:
-            st.image(monster["img_url"], use_container_width=True)
-        st.caption(monster["meta"])
-        st.markdown(f"**Класс брони:** {monster['armor_class_raw']}")
-        st.markdown(f"**Хиты:** {monster['hit_points_raw']}")
-        st.markdown(f"**Скорость:** {monster['speed']}")
-
-        st.markdown("### Характеристики")
-        c1, c2, c3 = st.columns(3)
-        c1.markdown(f"**STR**  {monster['str']} {monster['str_mod']}")
-        c2.markdown(f"**DEX**  {monster['dex']} {monster['dex_mod']}")
-        c3.markdown(f"**CON**  {monster['con']} {monster['con_mod']}")
-        c4, c5, c6 = st.columns(3)
-        c4.markdown(f"**INT**  {monster['int']} {monster['int_mod']}")
-        c5.markdown(f"**WIS**  {monster['wis']} {monster['wis_mod']}")
-        c6.markdown(f"**CHA**  {monster['cha']} {monster['cha_mod']}")
-
-        st.markdown(f"**Спасброски:** {monster['saving_throws']}")
-        st.markdown(f"**Навыки:** {monster['skills']}")
-        st.markdown(f"**Чувства:** {monster['senses']}")
-        st.markdown(f"**Языки:** {monster['languages']}")
-        st.markdown(f"**Опасность:** {monster['challenge']}")
-
-        if monster["traits"]:
-            st.markdown("### Особенности")
-            st.markdown(monster["traits"], unsafe_allow_html=True)
-        if monster["actions"]:
-            st.markdown("### Действия")
-            st.markdown(monster["actions"], unsafe_allow_html=True)
-        if monster["legendary_actions"]:
-            st.markdown("### Легендарные действия")
-            st.markdown(monster["legendary_actions"], unsafe_allow_html=True)
+        st.markdown(f"**Пользователь:** {st.session_state.auth_user}")
+        if st.button("Выйти", use_container_width=True, key="sidebar_logout"):
+            st.session_state.is_authenticated = False
+            st.session_state.auth_user = None
+            st.session_state.screen = "prepare"
+            st.session_state.battle_state = None
+            st.session_state.selected_monster_sidebar = None
+            st.session_state.show_monster_modal = False
+            st.rerun()
 
 
 # ============================================================
@@ -1116,32 +1070,31 @@ def render_battle_header() -> None:
     active_name = active["name"] if active else "—"
 
     with st.container(border=True):
-        c1, c2, c3, c4, c5, c6 = st.columns([1.8, 0.7, 0.7, 1.2, 1.35, 1.0], gap="small")
-        with c1:
+        cols = st.columns([2.2, 1.2, 0.8, 0.8, 1.0, 1.0, 1.0], gap="small")
+        with cols[0]:
             st.markdown(f"**{battle_state['encounter_name']}**")
-            st.caption(f"Сейчас ходит: {active_name}")
-        with c2:
-            st.metric("Раунд", battle_state["round"])
-        with c3:
-            st.metric("Ход", current_turn)
-        with c4:
-            st.markdown("### ")
-            if st.button("Следующий ход", use_container_width=True, type="primary"):
+        with cols[1]:
+            st.caption(f"Сейчас: {active_name}")
+        with cols[2]:
+            st.markdown(f"**Раунд {battle_state['round']}**")
+        with cols[3]:
+            st.markdown(f"**Ход {current_turn}**")
+        with cols[4]:
+            if st.button("Следующий", use_container_width=True, type="primary"):
                 next_turn()
                 st.rerun()
-        with c5:
-            st.markdown("### ")
+        with cols[5]:
             if st.button(
-                "Редактировать порядок" if not st.session_state.battle_edit_order_mode else "Завершить редактирование",
+                "Порядок" if not st.session_state.battle_edit_order_mode else "Готово",
                 use_container_width=True,
             ):
                 st.session_state.battle_edit_order_mode = not st.session_state.battle_edit_order_mode
                 st.rerun()
-        with c6:
-            st.markdown("### ")
-            if st.button("Завершить бой", use_container_width=True):
+        with cols[6]:
+            if st.button("Завершить", use_container_width=True):
                 st.session_state.battle_state = None
                 st.session_state.selected_monster_sidebar = None
+                st.session_state.show_monster_modal = False
                 st.session_state.battle_edit_order_mode = False
                 st.session_state.screen = "prepare"
                 st.rerun()
@@ -1188,85 +1141,133 @@ def render_combatant_card(combatant: Dict[str, Any], index: int, is_active: bool
 
     border = COMBATANT_TYPE_BORDER.get(combatant["type"], "rgba(255,255,255,0.14)")
     is_disabled = combatant["current_hp"] <= 0
+    opacity = 0.62 if is_disabled else 1.0
 
     with st.container(border=True):
-        stripe_col, content_col = st.columns([0.02, 0.98], gap="small")
+        stripe_col, content_col = st.columns([0.018, 0.982], gap="small")
 
-        # Левая цветная полоса
         with stripe_col:
-            accent_style = f"background:{border}; width:100%; min-height:64px; border-radius:8px; opacity:{0.6 if is_disabled else 1.0};"
+            accent_style = f"background:{border}; width:100%; min-height:56px; border-radius:8px; opacity:{opacity};"
             if is_active:
-                accent_style = f"background:linear-gradient(180deg, rgba(250,204,21,0.95), {border}); width:100%; min-height:64px; border-radius:8px;"
+                accent_style = f"background:linear-gradient(180deg, rgba(250,204,21,0.95), {border}); width:100%; min-height:56px; border-radius:8px;"
             st.markdown(f"<div style='{accent_style}'></div>", unsafe_allow_html=True)
 
-        # Основная строка
         with content_col:
-            row = st.columns([1.6, 1.8, 1.2], gap="small")
+            row = st.columns([1.7, 1.2, 1.15], gap="small")
 
-            # === ИНФО ===
             with row[0]:
-                left, right = st.columns([0.25, 1.75])
-                left.markdown(f"**{index + 1}**")
-
-                with right:
+                info_cols = st.columns([0.18, 1.5, 1.0], gap="small")
+                with info_cols[0]:
+                    st.markdown(f"**{index + 1}**")
+                with info_cols[1]:
                     if combatant["type"] == "monster":
                         if st.button(combatant["name"], key=f"open_monster_{combatant['id']}", use_container_width=True):
                             st.session_state.selected_monster_sidebar = combatant.get("monster_ref") or combatant["name"]
+                            st.session_state.show_monster_modal = True
                             st.rerun()
                     else:
                         st.markdown(f"**{combatant['name']}**")
-
+                with info_cols[2]:
                     chips = [f"<span class='type-chip'>{combatant_type_badge(combatant['type'])}</span>"]
                     if is_active:
                         chips.append("<span class='turn-chip'>ХОД</span>")
                     st.markdown("".join(chips), unsafe_allow_html=True)
 
-            # === СТАТЫ + СТАТУСЫ ===
             with row[1]:
-                stats_line = (
-                    f"🛡️ {combatant['armor_class']}  &nbsp;&nbsp; "
-                    f"⚡ {combatant['initiative']}  &nbsp;&nbsp; "
-                    f"❤️ {combatant['current_hp']}/{combatant['max_hp']}"
+                st.markdown(
+                    f"🛡️ {combatant['armor_class']} &nbsp;&nbsp; ⚡ {combatant['initiative']} &nbsp;&nbsp; ❤️ {combatant['current_hp']}/{combatant['max_hp']}",
+                    unsafe_allow_html=True,
                 )
-                st.markdown(stats_line, unsafe_allow_html=True)
-
                 statuses = combatant.get("statuses", [])
                 if statuses:
                     render_status_chips(statuses)
 
-            # === УПРАВЛЕНИЕ HP ===
             with row[2]:
-                c1, c2, c3 = st.columns([1.2, 0.8, 0.8])
-
-                hp_delta = c1.number_input(
+                action_cols = st.columns([1.0, 0.55, 0.55, 1.0], gap="small")
+                hp_delta = action_cols[0].number_input(
                     "",
                     value=0,
                     step=1,
                     key=f"hp_delta_{combatant['id']}",
                     label_visibility="collapsed",
                 )
-
-                if c2.button("➖", key=f"damage_{combatant['id']}", use_container_width=True):
+                if action_cols[1].button("➖", key=f"damage_{combatant['id']}", use_container_width=True):
                     apply_hp_delta(combatant["id"], -abs(int(hp_delta)))
                     st.rerun()
-
-                if c3.button("➕", key=f"heal_{combatant['id']}", use_container_width=True):
+                if action_cols[2].button("➕", key=f"heal_{combatant['id']}", use_container_width=True):
                     apply_hp_delta(combatant["id"], abs(int(hp_delta)))
                     st.rerun()
+                with action_cols[3]:
+                    with st.expander("Статусы"):
+                        render_status_editor(combatant)
 
-                # Статусы (expander)
-                with st.expander("Статусы"):
-                    render_status_editor(combatant)
-
-                # Режим редактирования порядка
-                if st.session_state.battle_edit_order_mode:
+            if st.session_state.battle_edit_order_mode:
+                with st.container():
                     st.markdown("---")
                     render_order_editor(combatant)
 
 
 
+def render_monster_modal(monsters: List[Dict[str, Any]]) -> None:
+    if not st.session_state.get("show_monster_modal"):
+        return
+
+    selected_name = st.session_state.get("selected_monster_sidebar")
+    if not selected_name:
+        return
+
+    monster = get_monster_by_name(monsters, selected_name)
+    if not monster:
+        st.warning("Монстр не найден в выбранной базе.")
+        return
+
+    @st.dialog(f"Монстр: {monster['name']}", width="large")
+    def monster_dialog() -> None:
+        top_left, top_right = st.columns([1.0, 1.6], gap="large")
+        with top_left:
+            if monster["img_url"]:
+                st.image(monster["img_url"], use_container_width=True)
+            st.caption(monster["meta"])
+            st.markdown(f"**Класс брони:** {monster['armor_class_raw']}")
+            st.markdown(f"**Хиты:** {monster['hit_points_raw']}")
+            st.markdown(f"**Скорость:** {monster['speed']}")
+            st.markdown(f"**Спасброски:** {monster['saving_throws']}")
+            st.markdown(f"**Навыки:** {monster['skills']}")
+            st.markdown(f"**Чувства:** {monster['senses']}")
+            st.markdown(f"**Языки:** {monster['languages']}")
+            st.markdown(f"**Опасность:** {monster['challenge']}")
+        with top_right:
+            st.markdown("### Характеристики")
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"**STR**  {monster['str']} {monster['str_mod']}")
+            c2.markdown(f"**DEX**  {monster['dex']} {monster['dex_mod']}")
+            c3.markdown(f"**CON**  {monster['con']} {monster['con_mod']}")
+            c4, c5, c6 = st.columns(3)
+            c4.markdown(f"**INT**  {monster['int']} {monster['int_mod']}")
+            c5.markdown(f"**WIS**  {monster['wis']} {monster['wis_mod']}")
+            c6.markdown(f"**CHA**  {monster['cha']} {monster['cha_mod']}")
+
+            if monster["traits"]:
+                st.markdown("### Особенности")
+                st.markdown(monster["traits"], unsafe_allow_html=True)
+            if monster["actions"]:
+                st.markdown("### Действия")
+                st.markdown(monster["actions"], unsafe_allow_html=True)
+            if monster["legendary_actions"]:
+                st.markdown("### Легендарные действия")
+                st.markdown(monster["legendary_actions"], unsafe_allow_html=True)
+
+        if st.button("Закрыть", use_container_width=True):
+            st.session_state.show_monster_modal = False
+            st.rerun()
+
+    monster_dialog()
+
+
+
 def render_battle_screen(monsters: List[Dict[str, Any]]) -> None:
     render_battle_header()
+    render_monster_modal(monsters)
 
     battle_state = st.session_state.battle_state
     if not battle_state or not battle_state["combatants"]:
