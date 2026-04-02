@@ -1070,7 +1070,7 @@ def render_battle_header() -> None:
     active_name = active["name"] if active else "—"
 
     with st.container(border=True):
-        cols = st.columns([2.2, 1.2, 0.8, 0.8, 1.0, 1.0, 1.0], gap="small")
+        cols = st.columns([2.4, 1.2, 0.8, 0.8, 1.0, 0.9, 1.0], gap="small")
         with cols[0]:
             st.markdown(f"**{battle_state['encounter_name']}**")
         with cols[1]:
@@ -1084,10 +1084,7 @@ def render_battle_header() -> None:
                 next_turn()
                 st.rerun()
         with cols[5]:
-            if st.button(
-                "Порядок" if not st.session_state.battle_edit_order_mode else "Готово",
-                use_container_width=True,
-            ):
+            if st.button("Порядок" if not st.session_state.battle_edit_order_mode else "Готово", use_container_width=True):
                 st.session_state.battle_edit_order_mode = not st.session_state.battle_edit_order_mode
                 st.rerun()
         with cols[6]:
@@ -1136,79 +1133,48 @@ def render_order_editor(combatant: Dict[str, Any]) -> None:
 
 
 
-def render_combatant_card(combatant: Dict[str, Any], index: int, is_active: bool) -> None:
-    normalize_combatant_hp_and_statuses(combatant)
+def render_battle_screen(monsters: List[Dict[str, Any]]) -> None:
+    render_battle_header()
+    render_monster_modal(monsters)
 
-    border = COMBATANT_TYPE_BORDER.get(combatant["type"], "rgba(255,255,255,0.14)")
-    is_disabled = combatant["current_hp"] <= 0
-    opacity = 0.62 if is_disabled else 1.0
+    battle_state = st.session_state.battle_state
+    if not battle_state or not battle_state["combatants"]:
+        st.info("Нет участников в текущем бою")
+        return
 
-    with st.container(border=True):
-        stripe_col, content_col = st.columns([0.018, 0.982], gap="small")
+    active = get_active_combatant(battle_state)
+    active_id = active["id"] if active else None
 
-        with stripe_col:
-            accent_style = f"background:{border}; width:100%; min-height:56px; border-radius:8px; opacity:{opacity};"
-            if is_active:
-                accent_style = f"background:linear-gradient(180deg, rgba(250,204,21,0.95), {border}); width:100%; min-height:56px; border-radius:8px;"
-            st.markdown(f"<div style='{accent_style}'></div>", unsafe_allow_html=True)
-
-        with content_col:
-            row = st.columns([1.7, 1.2, 1.15], gap="small")
-
-            with row[0]:
-                info_cols = st.columns([0.18, 1.5, 1.0], gap="small")
-                with info_cols[0]:
-                    st.markdown(f"**{index + 1}**")
-                with info_cols[1]:
-                    if combatant["type"] == "monster":
-                        if st.button(combatant["name"], key=f"open_monster_{combatant['id']}", use_container_width=True):
-                            st.session_state.selected_monster_sidebar = combatant.get("monster_ref") or combatant["name"]
-                            st.session_state.show_monster_modal = True
-                            st.rerun()
-                    else:
-                        st.markdown(f"**{combatant['name']}**")
-                with info_cols[2]:
-                    chips = [f"<span class='type-chip'>{combatant_type_badge(combatant['type'])}</span>"]
-                    if is_active:
-                        chips.append("<span class='turn-chip'>ХОД</span>")
-                    st.markdown("".join(chips), unsafe_allow_html=True)
-
-            with row[1]:
-                st.markdown(
-                    f"🛡️ {combatant['armor_class']} &nbsp;&nbsp; ⚡ {combatant['initiative']} &nbsp;&nbsp; ❤️ {combatant['current_hp']}/{combatant['max_hp']}",
-                    unsafe_allow_html=True,
-                )
-                statuses = combatant.get("statuses", [])
-                if statuses:
-                    render_status_chips(statuses)
-
-            with row[2]:
-                action_cols = st.columns([1.0, 0.55, 0.55, 1.0], gap="small")
-                hp_delta = action_cols[0].number_input(
-                    "",
-                    value=0,
-                    step=1,
-                    key=f"hp_delta_{combatant['id']}",
-                    label_visibility="collapsed",
-                )
-                if action_cols[1].button("➖", key=f"damage_{combatant['id']}", use_container_width=True):
-                    apply_hp_delta(combatant["id"], -abs(int(hp_delta)))
-                    st.rerun()
-                if action_cols[2].button("➕", key=f"heal_{combatant['id']}", use_container_width=True):
-                    apply_hp_delta(combatant["id"], abs(int(hp_delta)))
-                    st.rerun()
-                with action_cols[3]:
-                    with st.expander("Статусы"):
-                        render_status_editor(combatant)
-
-            if st.session_state.battle_edit_order_mode:
-                with st.container():
-                    st.markdown("---")
-                    render_order_editor(combatant)
+    for index, combatant in enumerate(battle_state["combatants"]):
+        render_combatant_card(combatant, index, combatant["id"] == active_id)
 
 
+# ============================================================
+# Main
+# ============================================================
 
-def render_monster_modal(monsters: List[Dict[str, Any]]) -> None:
+
+def main() -> None:
+    inject_styles()
+
+    if not st.session_state.is_authenticated:
+        render_login()
+        return
+
+    header_bar()
+
+    monsters = load_monster_database(st.session_state.selected_db_title)
+    render_monster_sidebar(monsters)
+
+    if st.session_state.screen == "battle" and st.session_state.battle_state:
+        render_battle_screen(monsters)
+    else:
+        render_prepare_screen(monsters)
+
+
+if __name__ == "__main__":
+    main()
+(monsters: List[Dict[str, Any]]) -> None:
     if not st.session_state.get("show_monster_modal"):
         return
 
