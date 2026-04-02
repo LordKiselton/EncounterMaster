@@ -27,8 +27,8 @@ ENCOUNTERS_FILE = DATA_DIR / "encounters.json"
 PRESETS_FILE = DATA_DIR / "presets.json"
 
 MONSTER_DATABASES = {
-    "Бестиарий РУ": "monsters_base_ru.json",
-    "Бестиарий EN": "monsters_base.json",
+    "Базовая база монстров": "monsters_base.json",
+    "Кастомная база монстров": "monsters_custom.json",
 }
 
 STATUS_LIBRARY = {
@@ -1191,18 +1191,24 @@ def render_combatant_card(combatant: Dict[str, Any], index: int, is_active: bool
 
     with st.container(border=True):
         stripe_col, content_col = st.columns([0.02, 0.98], gap="small")
-        with stripe_col:
-            accent_style = f"background:{border}; width:100%; min-height:168px; border-radius:12px; opacity:{0.65 if is_disabled else 1.0};"
-            if is_active:
-                accent_style = f"background:linear-gradient(180deg, rgba(250,204,21,0.95), {border}); width:100%; min-height:168px; border-radius:12px; opacity:{0.65 if is_disabled else 1.0};"
-            st.markdown(f"<div style='{accent_style}'></div>", unsafe_allow_html=True)
-        with content_col:
-            info_col, state_col, action_col = st.columns([1.35, 1.85, 1.0], gap="medium")
 
-            with info_col:
-                top_left, top_right = st.columns([0.22, 1.78])
-                top_left.markdown(f"### {index + 1}")
-                with top_right:
+        # Левая цветная полоса
+        with stripe_col:
+            accent_style = f"background:{border}; width:100%; min-height:64px; border-radius:8px; opacity:{0.6 if is_disabled else 1.0};"
+            if is_active:
+                accent_style = f"background:linear-gradient(180deg, rgba(250,204,21,0.95), {border}); width:100%; min-height:64px; border-radius:8px;"
+            st.markdown(f"<div style='{accent_style}'></div>", unsafe_allow_html=True)
+
+        # Основная строка
+        with content_col:
+            row = st.columns([1.6, 1.8, 1.2], gap="small")
+
+            # === ИНФО ===
+            with row[0]:
+                left, right = st.columns([0.25, 1.75])
+                left.markdown(f"**{index + 1}**")
+
+                with right:
                     if combatant["type"] == "monster":
                         if st.button(combatant["name"], key=f"open_monster_{combatant['id']}", use_container_width=True):
                             st.session_state.selected_monster_sidebar = combatant.get("monster_ref") or combatant["name"]
@@ -1215,41 +1221,46 @@ def render_combatant_card(combatant: Dict[str, Any], index: int, is_active: bool
                         chips.append("<span class='turn-chip'>ХОД</span>")
                     st.markdown("".join(chips), unsafe_allow_html=True)
 
-            with state_col:
-                metric_html = (
-                    f"<span class='metric-chip'>🛡️ {combatant['armor_class']}</span>"
-                    f"<span class='metric-chip'>⚡ {combatant['initiative']}</span>"
-                    f"<span class='metric-chip'>❤️ {combatant['current_hp']} / {combatant['max_hp']}</span>"
+            # === СТАТЫ + СТАТУСЫ ===
+            with row[1]:
+                stats_line = (
+                    f"🛡️ {combatant['armor_class']}  &nbsp;&nbsp; "
+                    f"⚡ {combatant['initiative']}  &nbsp;&nbsp; "
+                    f"❤️ {combatant['current_hp']}/{combatant['max_hp']}"
                 )
-                st.markdown(metric_html, unsafe_allow_html=True)
-                render_hp_bar(int(combatant["current_hp"]), int(combatant["max_hp"]))
-                status_left, status_right = st.columns([1.4, 1.0])
-                with status_left:
-                    render_status_chips(combatant.get("statuses", []))
-                with status_right:
-                    with st.expander("Статусы"):
-                        render_status_editor(combatant)
+                st.markdown(stats_line, unsafe_allow_html=True)
 
-            with action_col:
-                hp_delta = st.number_input(
-                    "Значение изменения HP",
+                statuses = combatant.get("statuses", [])
+                if statuses:
+                    render_status_chips(statuses)
+
+            # === УПРАВЛЕНИЕ HP ===
+            with row[2]:
+                c1, c2, c3 = st.columns([1.2, 0.8, 0.8])
+
+                hp_delta = c1.number_input(
+                    "",
                     value=0,
                     step=1,
                     key=f"hp_delta_{combatant['id']}",
                     label_visibility="collapsed",
                 )
-                st.caption("Изменение HP")
-                h1, h2 = st.columns(2)
-                if h1.button("- Урон", key=f"damage_{combatant['id']}", use_container_width=True):
+
+                if c2.button("➖", key=f"damage_{combatant['id']}", use_container_width=True):
                     apply_hp_delta(combatant["id"], -abs(int(hp_delta)))
                     st.rerun()
-                if h2.button("+ Лечение", key=f"heal_{combatant['id']}", use_container_width=True):
+
+                if c3.button("➕", key=f"heal_{combatant['id']}", use_container_width=True):
                     apply_hp_delta(combatant["id"], abs(int(hp_delta)))
                     st.rerun()
 
+                # Статусы (expander)
+                with st.expander("Статусы"):
+                    render_status_editor(combatant)
+
+                # Режим редактирования порядка
                 if st.session_state.battle_edit_order_mode:
                     st.markdown("---")
-                    st.markdown("**Редактирование порядка**")
                     render_order_editor(combatant)
 
 
