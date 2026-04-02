@@ -117,7 +117,6 @@ def extract_first_int(value: Any, fallback: int = 0) -> int:
 def normalize_monster(raw: Dict[str, Any]) -> Dict[str, Any]:
     armor_class_raw = raw.get("Armor Class", "0")
     hp_raw = raw.get("Hit Points", "0")
-
     return {
         "name": raw.get("name", "Безымянный монстр"),
         "meta": raw.get("meta", ""),
@@ -173,6 +172,8 @@ def init_state() -> None:
         "battle_state": None,
         "selected_monster_name": None,
         "show_monster_modal": False,
+        "party_import_nonce": 0,
+        "encounter_import_nonce": 0,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -231,7 +232,6 @@ def sort_battle_combatants(combatants: List[Dict[str, Any]]) -> List[Dict[str, A
     assign_sort_order(combatants)
     living = [c for c in combatants if not (c["type"] == "monster" and "Мёртв" in c.get("statuses", []))]
     dead_monsters = [c for c in combatants if c["type"] == "monster" and "Мёртв" in c.get("statuses", [])]
-
     living_sorted = sorted(living, key=lambda c: (-int(c["initiative"]), int(c["sort_order"])))
     dead_sorted = sorted(dead_monsters, key=lambda c: (-int(c["initiative"]), int(c["sort_order"])))
     return living_sorted + dead_sorted
@@ -243,18 +243,6 @@ def get_roster_summary(combatants: List[Dict[str, Any]]) -> Dict[str, int]:
         "npcs": sum(1 for c in combatants if c["type"] == "npc"),
         "monsters": sum(1 for c in combatants if c["type"] == "monster"),
     }
-
-
-def update_prepare_combatant(combatant_id: str, updates: Dict[str, Any]) -> None:
-    for combatant in st.session_state.create_combatants:
-        if combatant["id"] == combatant_id:
-            combatant["name"] = updates["name"].strip()
-            combatant["armor_class"] = int(updates["armor_class"])
-            combatant["initiative"] = int(updates["initiative"])
-            combatant["max_hp"] = int(updates["max_hp"])
-            combatant["current_hp"] = min(int(updates["current_hp"]), int(updates["max_hp"]))
-            break
-    st.session_state.create_combatants = sort_prepare_combatants(st.session_state.create_combatants)
 
 
 def build_party_export(combatants: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -478,7 +466,6 @@ def inject_styles() -> None:
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
         html, body, [class*="css"] {
             font-family: 'Inter', sans-serif;
         }
@@ -598,8 +585,7 @@ def close_monster_modal() -> None:
 
 def render_prepare_action_bar() -> None:
     st.subheader("Подготовка столкновения")
-
-    c1, c2, c3, c4, c5, c6 = st.columns([1.45, 1.15, 1.0, 1.0, 1.0, 1.0])
+    c1, c2, c3 = st.columns([1.7, 1.2, 1.0])
 
     with c1:
         st.session_state.encounter_name_input = st.text_input(
@@ -617,39 +603,6 @@ def render_prepare_action_bar() -> None:
 
     with c3:
         st.write("")
-        party_export = build_party_export(st.session_state.create_combatants)
-        st.download_button(
-            "Экспорт отряда",
-            data=json.dumps(party_export, ensure_ascii=False, indent=2),
-            file_name="party.json",
-            mime="application/json",
-            use_container_width=True,
-            key="export_party_json",
-        )
-
-    with c4:
-        st.write("")
-        encounter_export = build_encounter_export(
-            st.session_state.encounter_name_input,
-            st.session_state.create_combatants,
-        )
-        st.download_button(
-            "Экспорт столкновения",
-            data=json.dumps(encounter_export, ensure_ascii=False, indent=2),
-            file_name="encounter.json",
-            mime="application/json",
-            use_container_width=True,
-            key="export_encounter_json",
-        )
-
-    with c5:
-        st.write("")
-        if st.button("Очистить состав", use_container_width=True, key="clear_prepare_roster_main"):
-            st.session_state.create_combatants = []
-            st.rerun()
-
-    with c6:
-        st.write("")
         if st.button("Начать бой", use_container_width=True, type="primary", key="start_battle_main"):
             if not st.session_state.create_combatants:
                 st.error("Сначала добавь участников")
@@ -662,43 +615,57 @@ def render_prepare_action_bar() -> None:
                 st.rerun()
 
 
+def reset_party_import_uploader() -> None:
+    st.session_state.party_import_nonce += 1
+
+
+def reset_encounter_import_uploader() -> None:
+    st.session_state.encounter_import_nonce += 1
+
+
 def render_json_imports() -> None:
     st.markdown("<div class='section-title'>Импорт JSON</div>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
 
     with c1:
-        party_file = st.file_uploader(
-            "Импорт отряда",
-            type=["json"],
-            key="party_json_import",
-        )
+        party_key = f"party_json_import_{st.session_state.party_import_nonce}"
+        party_file = st.file_uploader("Отряд", type=["json"], key=party_key)
         if party_file is not None:
-            try:
-                payload = json.load(party_file)
-                imported = import_party_payload(payload)
-                st.session_state.create_combatants.extend(imported)
-                st.session_state.create_combatants = sort_prepare_combatants(st.session_state.create_combatants)
-                st.success(f"Импортировано участников отряда: {len(imported)}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Ошибка импорта отряда: {e}")
+            st.caption(f"Выбран файл: {party_file.name}")
+        if st.button("Импортировать отряд", use_container_width=True, key=f"import_party_btn_{st.session_state.party_import_nonce}"):
+            if party_file is None:
+                st.warning("Сначала выбери файл отряда")
+            else:
+                try:
+                    payload = json.load(party_file)
+                    imported = import_party_payload(payload)
+                    st.session_state.create_combatants.extend(imported)
+                    st.session_state.create_combatants = sort_prepare_combatants(st.session_state.create_combatants)
+                    reset_party_import_uploader()
+                    st.success(f"Импортировано участников отряда: {len(imported)}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка импорта отряда: {e}")
 
     with c2:
-        encounter_file = st.file_uploader(
-            "Импорт столкновения",
-            type=["json"],
-            key="encounter_json_import",
-        )
+        encounter_key = f"encounter_json_import_{st.session_state.encounter_import_nonce}"
+        encounter_file = st.file_uploader("Столкновение", type=["json"], key=encounter_key)
         if encounter_file is not None:
-            try:
-                payload = json.load(encounter_file)
-                name, imported = import_encounter_payload(payload)
-                st.session_state.encounter_name_input = name
-                st.session_state.create_combatants = sort_prepare_combatants(imported)
-                st.success(f"Импортировано участников столкновения: {len(imported)}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Ошибка импорта столкновения: {e}")
+            st.caption(f"Выбран файл: {encounter_file.name}")
+        if st.button("Импортировать столкновение", use_container_width=True, key=f"import_encounter_btn_{st.session_state.encounter_import_nonce}"):
+            if encounter_file is None:
+                st.warning("Сначала выбери файл столкновения")
+            else:
+                try:
+                    payload = json.load(encounter_file)
+                    name, imported = import_encounter_payload(payload)
+                    st.session_state.encounter_name_input = name
+                    st.session_state.create_combatants = sort_prepare_combatants(imported)
+                    reset_encounter_import_uploader()
+                    st.success(f"Импортировано участников столкновения: {len(imported)}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка импорта столкновения: {e}")
 
 
 def render_add_manual_combatant_tab() -> None:
@@ -778,14 +745,8 @@ def render_add_monster_tab(monsters: List[Dict[str, Any]]) -> None:
         c1, c2 = st.columns(2)
         with c1:
             custom_name = st.text_input("Имя в бою", value=monster["name"])
-            initiative = st.number_input("Инициатива", value=0, step=1, key="monster_init_input")
         with c2:
-            use_edit_mode = st.checkbox("Изменить параметры перед добавлением")
-            edit_ac = monster["armor_class_value"]
-            edit_hp = monster["hit_points_value"]
-            if use_edit_mode:
-                edit_ac = st.number_input("Класс брони (override)", min_value=0, value=monster["armor_class_value"], step=1)
-                edit_hp = st.number_input("HP (override)", min_value=1, value=monster["hit_points_value"], step=1)
+            initiative = st.number_input("Инициатива", value=0, step=1, key="monster_init_input")
 
         submitted = st.form_submit_button("Добавить монстра", use_container_width=True)
 
@@ -794,9 +755,9 @@ def render_add_monster_tab(monsters: List[Dict[str, Any]]) -> None:
             new_combatant(
                 name=custom_name or monster["name"],
                 combatant_type="monster",
-                max_hp=int(edit_hp),
-                current_hp=int(edit_hp),
-                armor_class=int(edit_ac),
+                max_hp=int(monster["hit_points_value"]),
+                current_hp=int(monster["hit_points_value"]),
+                armor_class=int(monster["armor_class_value"]),
                 initiative=int(initiative),
                 monster_ref=monster["name"],
             )
@@ -807,34 +768,7 @@ def render_add_monster_tab(monsters: List[Dict[str, Any]]) -> None:
 
 def render_prepare_summary(combatants: List[Dict[str, Any]]) -> None:
     summary = get_roster_summary(combatants)
-    st.caption(
-        f"Игроков: {summary['players']} | NPC: {summary['npcs']} | Монстров: {summary['monsters']}"
-    )
-
-
-def render_prepare_combatant_editor(combatant: Dict[str, Any]) -> None:
-    with st.expander("Ред."):
-        c1, c2 = st.columns(2)
-        with c1:
-            edit_name = st.text_input("Имя", value=combatant["name"], key=f"edit_name_{combatant['id']}")
-            edit_initiative = st.number_input("Инициатива", value=int(combatant["initiative"]), step=1, key=f"edit_init_{combatant['id']}")
-            edit_armor = st.number_input("Класс брони", value=int(combatant["armor_class"]), step=1, key=f"edit_ac_{combatant['id']}")
-        with c2:
-            edit_max_hp = st.number_input("Макс HP", min_value=1, value=int(combatant["max_hp"]), step=1, key=f"edit_maxhp_{combatant['id']}")
-            edit_current_hp = st.number_input("Текущий HP", min_value=0, value=int(combatant["current_hp"]), step=1, key=f"edit_curhp_{combatant['id']}")
-
-        if st.button("Применить", key=f"apply_prepare_edit_{combatant['id']}", use_container_width=True):
-            update_prepare_combatant(
-                combatant["id"],
-                {
-                    "name": edit_name,
-                    "initiative": edit_initiative,
-                    "armor_class": edit_armor,
-                    "max_hp": edit_max_hp,
-                    "current_hp": edit_current_hp,
-                },
-            )
-            st.rerun()
+    st.caption(f"Игроков: {summary['players']} | NPC: {summary['npcs']} | Монстров: {summary['monsters']}")
 
 
 def render_prepare_roster() -> None:
@@ -853,28 +787,59 @@ def render_prepare_roster() -> None:
             stripe_col, content_col = st.columns([0.02, 0.98], gap="small")
             with stripe_col:
                 st.markdown(
-                    f"<div style='background:{border}; width:100%; min-height:88px; border-radius:10px;'></div>",
+                    f"<div style='background:{border}; width:100%; min-height:80px; border-radius:10px;'></div>",
                     unsafe_allow_html=True,
                 )
             with content_col:
-                row = st.columns([0.4, 1.8, 1.45, 0.7, 0.9], gap="small")
+                row = st.columns([0.4, 2.0, 1.55, 0.7], gap="small")
                 with row[0]:
                     st.markdown(f"**{idx + 1}**")
                 with row[1]:
                     st.markdown(f"**{combatant['name']}**")
-                    st.markdown(f"<span class='type-chip'>{COMBATANT_TYPE_LABELS[combatant['type']]}</span>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"<span class='type-chip'>{COMBATANT_TYPE_LABELS[combatant['type']]}</span>",
+                        unsafe_allow_html=True,
+                    )
                 with row[2]:
                     st.markdown(
                         f"<span style='font-size:1.01rem; font-weight:600;'>🛡️ {combatant['armor_class']} &nbsp;&nbsp; ⚡ {combatant['initiative']} &nbsp;&nbsp; ❤️ {combatant['current_hp']}/{combatant['max_hp']}</span>",
                         unsafe_allow_html=True,
                     )
                 with row[3]:
-                    render_prepare_combatant_editor(combatant)
-                with row[4]:
-                    if st.button("Удалить", key=f"remove_prepare_{combatant['id']}", use_container_width=True):
+                    if st.button("🗑️", key=f"remove_prepare_{combatant['id']}", use_container_width=True):
                         st.session_state.create_combatants = [c for c in combatants if c["id"] != combatant["id"]]
                         st.session_state.create_combatants = sort_prepare_combatants(st.session_state.create_combatants)
                         st.rerun()
+
+    st.markdown("---")
+    export_cols = st.columns([1, 1, 1])
+    with export_cols[0]:
+        party_export = build_party_export(st.session_state.create_combatants)
+        st.download_button(
+            "Экспорт отряда",
+            data=json.dumps(party_export, ensure_ascii=False, indent=2),
+            file_name="party.json",
+            mime="application/json",
+            use_container_width=True,
+            key="export_party_bottom",
+        )
+    with export_cols[1]:
+        encounter_export = build_encounter_export(
+            st.session_state.encounter_name_input,
+            st.session_state.create_combatants,
+        )
+        st.download_button(
+            "Экспорт столкновения",
+            data=json.dumps(encounter_export, ensure_ascii=False, indent=2),
+            file_name="encounter.json",
+            mime="application/json",
+            use_container_width=True,
+            key="export_encounter_bottom",
+        )
+    with export_cols[2]:
+        if st.button("Очистить состав", key="clear_prepare_roster_bottom", use_container_width=True):
+            st.session_state.create_combatants = []
+            st.rerun()
 
 
 def render_prepare_screen(monsters: List[Dict[str, Any]]) -> None:
@@ -975,7 +940,7 @@ def render_battle_header() -> None:
     active_name = active["name"] if active else "—"
 
     with st.container(border=True):
-        cols = st.columns([2.6, 1.3, 0.9, 0.9, 1.1], gap="small")
+        cols = st.columns([2.3, 1.2, 0.8, 0.8, 1.0, 1.1], gap="small")
         with cols[0]:
             st.markdown(f"**{battle_state['encounter_name']}**")
         with cols[1]:
@@ -987,6 +952,13 @@ def render_battle_header() -> None:
         with cols[4]:
             if st.button("Следующий", use_container_width=True, type="primary", key="battle_next_turn"):
                 next_turn()
+                st.rerun()
+        with cols[5]:
+            if st.button("Завершить бой", use_container_width=True, key="battle_end"):
+                st.session_state.battle_state = None
+                st.session_state.selected_monster_name = None
+                st.session_state.show_monster_modal = False
+                st.session_state.screen = "prepare"
                 st.rerun()
 
 
